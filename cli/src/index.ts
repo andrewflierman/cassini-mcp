@@ -1,4 +1,5 @@
-import { openDb } from "./db.js";
+import { handleAsk, handleQuery, handleTables, handleSchema } from "./commands.js";
+import { startRepl } from "./repl.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,36 +137,6 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { subcommand, positionals, db, limit, format, help, showSql };
 }
 
-// ─── Stub handlers (implemented in later tasks) ───────────────────────────────
-
-async function handleAsk(opts: ParsedArgs): Promise<void> {
-  const question = opts.positionals.join(" ");
-  console.log(`[ask] Translating to SQL: "${question}"`);
-  console.log(`[ask] db=${opts.db} limit=${opts.limit} format=${opts.format} showSql=${opts.showSql}`);
-  // TODO: implement in cli-ai + cli-commands tasks
-}
-
-async function handleQuery(opts: ParsedArgs): Promise<void> {
-  const sql = opts.positionals.join(" ");
-  console.log(`[query] Running SQL: "${sql}"`);
-  console.log(`[query] db=${opts.db} limit=${opts.limit} format=${opts.format}`);
-  // TODO: implement in cli-commands task
-}
-
-async function handleTables(opts: ParsedArgs): Promise<void> {
-  console.log(`[tables] Listing tables in ${opts.db}`);
-  // TODO: implement in cli-commands task
-}
-
-async function handleSchema(opts: ParsedArgs): Promise<void> {
-  console.log(`[schema] Printing schema for ${opts.db}`);
-  // TODO: implement in cli-commands task
-}
-
-async function handleRepl(opts: ParsedArgs): Promise<void> {
-  console.log(`[repl] Starting interactive REPL (db=${opts.db})`);
-  // TODO: implement in cli-repl task
-}
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
@@ -210,7 +181,7 @@ async function main(): Promise<void> {
       await handleSchema(opts);
       break;
     case "repl":
-      await handleRepl(opts);
+      await startRepl({ db: opts.db, limit: opts.limit, format: opts.format });
       break;
   }
 }
