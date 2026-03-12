@@ -101,6 +101,35 @@ export function queryRaw(
   return allRows.slice(0, limit);
 }
 
+/**
+ * Returns sample distinct values for key columns, giving the AI context
+ * about what data actually exists in the database.
+ */
+export function getSampleValues(db: Database): string {
+  const samples: string[] = []
+
+  const sampleColumns: Array<{ table: string; column: string; limit: number }> = [
+    { table: 'master_plan', column: 'target', limit: 50 },
+    { table: 'master_plan', column: 'team', limit: 20 },
+    { table: 'master_plan', column: 'spass_type', limit: 10 },
+  ]
+
+  for (const { table, column, limit } of sampleColumns) {
+    try {
+      const rows = db
+        .query<{ val: string }, []>(
+          `SELECT DISTINCT "${column}" AS val FROM "${table}" WHERE "${column}" IS NOT NULL AND "${column}" != '' ORDER BY val LIMIT ${limit}`
+        )
+        .all()
+      if (rows.length > 0) {
+        samples.push(`${table}.${column}: ${rows.map(r => r.val).join(', ')}`)
+      }
+    } catch { /* skip if column/table doesn't exist */ }
+  }
+
+  return samples.join('\n')
+}
+
 /** Returns an array of { name, count } for each user table in the database. */
 export function getTableList(db: Database): Array<{ name: string; count: number }> {
   const tables = db

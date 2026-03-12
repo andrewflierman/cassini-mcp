@@ -1,120 +1,44 @@
 {
-  "sprint": "Cassini CLI",
-  "description": "Build a CLI tool that lets users query the Cassini mission SQLite database using natural language. TypeScript + Bun, using @anthropic-ai/sdk to translate natural language questions into SQL, then executing the SQL against the local SQLite database via bun:sqlite. The CLI lives in a new cli/ directory with its own package.json. The primary UX is: user asks a question in plain English, Claude generates the SQL, the CLI runs it and displays formatted results. Also supports direct SQL, shortcut commands, and an interactive REPL. Requires ANTHROPIC_API_KEY env var.",
+  "sprint": "Cassini CLI — claude -p refactor",
+  "description": "Refactor the Cassini CLI to use `claude -p` subprocess instead of @anthropic-ai/sdk for natural language to SQL translation. This allows the CLI to work with Claude Max/Pro OAuth tokens (via Claude Code) instead of requiring a separate pay-per-use API key. The CLI already works end-to-end — this sprint replaces the AI backend only. The system prompt with Cassini domain context, schema, and sample values is preserved and passed via --system-prompt flag.",
   "createdAt": "2026-03-12",
   "tasks": [
     {
-      "id": "cli-scaffold",
-      "title": "Create cli/ package scaffold and entry point",
+      "id": "refactor-ai",
+      "title": "Replace Anthropic SDK with claude -p in cli/src/ai.ts",
       "type": "backend",
-      "description": "Create the cli/ directory with package.json, tsconfig.json, and src/index.ts entry point.\n\npackage.json:\n- name: cassini-cli\n- dependencies: @anthropic-ai/sdk\n- devDependencies: @types/bun, typescript\n- scripts: { \"dev\": \"bun src/index.ts\", \"build\": \"bun build src/index.ts --compile --outfile=dist/cassini\" }\n\ntsconfig.json: same pattern as mcp/ (ESNext, bundler resolution, bun-types).\n\nsrc/index.ts:\n- Parse argv using a simple hand-rolled parser (no deps like commander/yargs)\n- Support these subcommands: ask, query, tables, schema, repl\n- The default (no subcommand but with positional args) should behave like 'ask' — i.e. 'cassini what moons did we observe' is equivalent to 'cassini ask what moons did we observe'\n- Support flags: --db <path> (default: ./cassini.db), --limit <n> (default: 50), --format <table|json|csv> (default: table), --help, --sql (show generated SQL without running it)\n- If no subcommand and no args, print usage and exit\n- Import db functions from a local db.ts (copy/adapt from mcp/src/db.ts — do NOT import across packages)\n\nThe entry point should dispatch to handler functions (implemented in later tasks) — for now, stub them with console.log placeholders.",
+      "description": "Rewrite cli/src/ai.ts to use `claude -p` subprocess instead of the Anthropic SDK.\n\nChanges:\n- Remove `import Anthropic from '@anthropic-ai/sdk'`\n- Keep `buildSystemPrompt(schema, sampleValues)` function as-is — it builds the system prompt with Cassini domain context, schema, and sample column values\n- Rewrite `naturalLanguageToSql(question, schema, sampleValues)` to:\n  - Strip Claude Code env vars (CLAUDECODE, CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_ENTRYPOINT) from the subprocess env to avoid nested-session errors (same pattern as loop/src/commands/run.ts:598-601)\n  - Spawn: `claude -p <question> --system-prompt <systemPrompt> --output-format text --model sonnet --dangerously-skip-permissions --allowedTools ''`\n  - Use `--output-format text` (not stream-json) — we just need the final result text\n  - Capture stdout as the result text\n  - Parse JSON `{ sql, explanation }` from the result (same extraction logic as before — look for JSON object in response)\n  - On non-zero exit: capture stderr and throw descriptive error\n- Rename `validateApiKey()` to `validateClaude()` — instead of checking ANTHROPIC_API_KEY env var, run `claude --version` and return true if it succeeds, false if claude CLI is not found\n\nReference implementation: see loop/src/commands/run.ts lines 598-627 for the same `claude -p` pattern with env stripping and stream-json parsing.",
       "acceptanceCriteria": [
-        "cli/package.json exists with @anthropic-ai/sdk as dependency",
-        "cli/tsconfig.json exists",
-        "cli/src/index.ts parses subcommands and flags from argv",
-        "Running 'bun cli/src/index.ts --help' prints usage info",
-        "Running 'bun cli/src/index.ts' (no args) prints usage and exits",
-        "Bare positional args (no subcommand) are treated as 'ask'",
-        "bun install in cli/ succeeds"
-      ]
-    },
-    {
-      "id": "cli-db",
-      "title": "Create cli/src/db.ts — database module adapted from mcp",
-      "type": "backend",
-      "description": "Copy and adapt mcp/src/db.ts into cli/src/db.ts. The core logic is identical — openDb, getSchema, query — but the query function should accept a limit parameter instead of hardcoding 100.\n\nChanges from mcp version:\n- query(db, sql, limit?) — limit parameter defaults to 50, caller can override. Still enforces the write-pattern guard.\n- Add a new function: queryRaw(db, sql, limit?) — returns the parsed row objects (not JSON string) for use by the formatter. This is the primary function the CLI will use.\n- getTableList(db) — returns array of { name: string, count: number } for the tables command.\n\nKeep openDb and getSchema as-is. Import from 'bun:sqlite'.",
-      "acceptanceCriteria": [
-        "cli/src/db.ts exports openDb, getSchema, query, queryRaw, getTableList",
-        "queryRaw returns an array of row objects, not a JSON string",
-        "queryRaw respects the limit parameter",
-        "Write statements are rejected with an error",
-        "getTableList returns [{name, count}] for each table"
-      ]
-    },
-    {
-      "id": "cli-formatter",
-      "title": "Create cli/src/formatter.ts — table, JSON, and CSV output",
-      "type": "backend",
-      "description": "Create a formatter module that takes an array of row objects and outputs them in one of three formats.\n\nExport a single function: formatRows(rows: Record<string, unknown>[], format: 'table' | 'json' | 'csv'): string\n\nTable format (default):\n- Auto-detect column widths from header + data (cap each column at 40 chars, truncate with '…')\n- Print header row with column names\n- Print a separator line of dashes\n- Print each row\n- Print a footer: '(N rows)'\n- Align columns with 2-space gaps\n- If no rows, print '(no results)'\n\nJSON format:\n- JSON.stringify(rows, null, 2)\n\nCSV format:\n- Header row with column names\n- Data rows with proper quoting (quote fields containing commas, quotes, or newlines; escape inner quotes by doubling)\n\nAll formats should handle empty results gracefully.",
-      "acceptanceCriteria": [
-        "cli/src/formatter.ts exports formatRows function",
-        "Table format shows aligned columns with header, separator, and row count footer",
-        "JSON format outputs pretty-printed JSON array",
-        "CSV format produces valid CSV with proper quoting",
-        "Empty results produce '(no results)' for table, '[]' for JSON, empty for CSV",
-        "Long values are truncated at 40 chars in table format"
-      ]
-    },
-    {
-      "id": "cli-ai",
-      "title": "Create cli/src/ai.ts — natural language to SQL via Anthropic SDK",
-      "type": "backend",
-      "description": "Create the AI module that translates natural language questions into SQL using the Anthropic SDK.\n\nExport: async function naturalLanguageToSql(question: string, schema: string): Promise<{ sql: string, explanation: string }>\n\nImplementation:\n- Import Anthropic from '@anthropic-ai/sdk' (the SDK auto-reads ANTHROPIC_API_KEY from env)\n- Use claude-sonnet-4-20250514 model (fast, cheap, good at SQL)\n- System prompt should include:\n  - The full database schema (passed in as parameter)\n  - Instructions: generate a single read-only SELECT statement, no mutations\n  - The database is SQLite — use SQLite syntax\n  - Respond with JSON: { \"sql\": \"...\", \"explanation\": \"one sentence explaining what the query does\" }\n  - If the question is ambiguous, make reasonable assumptions and note them in the explanation\n  - Use LIKE with % wildcards for fuzzy text matching\n  - Default to reasonable LIMITs if the query could return many rows\n- Parse the response JSON, extract sql and explanation\n- If the response can't be parsed, throw a clear error\n\nAlso export: function validateApiKey(): boolean — checks if ANTHROPIC_API_KEY is set, prints a helpful error message if not.\n\nIMPORTANT: The Anthropic SDK constructor takes no args — it reads ANTHROPIC_API_KEY from the environment automatically. Do NOT pass apiKey to the constructor.",
-      "acceptanceCriteria": [
-        "cli/src/ai.ts exports naturalLanguageToSql and validateApiKey",
-        "naturalLanguageToSql calls the Anthropic API with the schema in the system prompt",
+        "cli/src/ai.ts no longer imports @anthropic-ai/sdk",
+        "naturalLanguageToSql spawns claude -p subprocess with --system-prompt, --model sonnet, --output-format text",
+        "Claude Code env vars are stripped from subprocess environment",
         "Response is parsed as JSON with sql and explanation fields",
-        "Uses claude-sonnet-4-20250514 model",
-        "validateApiKey returns false and prints error if ANTHROPIC_API_KEY is missing",
-        "Errors from the API are caught and rethrown with clear messages"
+        "validateClaude checks for claude CLI availability instead of API key",
+        "Errors from the subprocess are caught and rethrown with clear messages"
       ]
     },
     {
-      "id": "cli-commands",
-      "title": "Implement all CLI command handlers",
+      "id": "refactor-callers",
+      "title": "Update commands.ts and repl.ts for new AI interface",
       "type": "backend",
-      "description": "Create cli/src/commands.ts with handler functions for each subcommand. Each handler receives the parsed options (db path, limit, format) and any positional args.\n\nCommands:\n\n1. ask <natural language question> — The primary command. Calls naturalLanguageToSql to get SQL, prints the explanation and generated SQL (dimmed), runs the query, formats and prints results. If --sql flag is set, only print the generated SQL without executing.\n   Example: cassini ask \"what are the most common observation targets?\"\n   Output:\n     Querying: SELECT target, COUNT(*) as count FROM master_plan GROUP BY target ORDER BY count DESC LIMIT 20\n     (then the formatted table)\n\n2. query <sql> — Run arbitrary SQL directly (no AI). Pass through to queryRaw, format output.\n   Example: cassini query \"SELECT target, COUNT(*) as n FROM master_plan GROUP BY target ORDER BY n DESC LIMIT 10\"\n\n3. tables — List all tables with row counts. Use getTableList, format as table.\n\n4. schema — Print full schema. Use getSchema, print as-is (not formatted as table).\n\nAll commands should:\n- Open the DB, run the query, format the output, print to stdout\n- Handle errors with a clean message to stderr + exit code 1\n- Respect the --format and --limit flags\n- The 'ask' command should check validateApiKey() before calling the API",
+      "description": "Update the two callsites of the AI module to use the renamed validation function.\n\nChanges to cli/src/commands.ts:\n- Change import from `validateApiKey` to `validateClaude`\n- Change the call in handleAsk from `validateApiKey()` to `validateClaude()`\n\nChanges to cli/src/repl.ts:\n- Change the ANTHROPIC_API_KEY env check warning to instead run validateClaude() — if false, warn that claude CLI is not available but raw SQL still works\n\nThe naturalLanguageToSql function signature is unchanged, so no other changes needed in these files.",
       "acceptanceCriteria": [
-        "cli/src/commands.ts exports handler functions for all 4 commands",
-        "ask command translates natural language to SQL via AI and runs it",
-        "ask command prints the generated SQL before results",
-        "ask command with --sql flag prints SQL only without executing",
-        "query command runs arbitrary SQL and formats output",
-        "tables command shows table names and row counts",
-        "schema command prints the database schema",
-        "All commands respect --format and --limit flags",
-        "Errors print to stderr and exit with code 1",
-        "ask command validates API key before making API call"
+        "commands.ts imports and calls validateClaude instead of validateApiKey",
+        "repl.ts warns about missing claude CLI instead of missing ANTHROPIC_API_KEY",
+        "handleAsk still validates before calling the AI",
+        "REPL still allows raw SQL when claude CLI is unavailable"
       ]
     },
     {
-      "id": "cli-repl",
-      "title": "Implement interactive REPL mode",
+      "id": "refactor-deps",
+      "title": "Remove @anthropic-ai/sdk dependency from cli/package.json",
       "type": "backend",
-      "description": "Create cli/src/repl.ts with an interactive REPL for running queries.\n\nBehavior:\n- Print a welcome banner: 'Cassini DB — interactive mode. Ask questions in English or type SQL directly.'\n- Prompt: 'cassini> '\n- Input handling: if the input starts with SELECT/PRAGMA/EXPLAIN/WITH (case-insensitive), treat as raw SQL. Otherwise, treat as natural language and run through the AI pipeline.\n- For natural language queries, print the generated SQL (dimmed) before the results.\n- Special dot-commands:\n  - .help — print available commands\n  - .tables — same as tables command\n  - .schema — same as schema command\n  - .format <table|json|csv> — switch output format\n  - .limit <n> — change row limit\n  - .sql — toggle showing/hiding generated SQL\n  - .quit or .exit — exit\n- Ctrl+C / Ctrl+D exits cleanly\n- Use Bun's built-in readline or process.stdin line-by-line reading (no external deps)\n- Handle errors gracefully — print the error and continue (don't crash)\n- Validate API key on entry — warn if missing but still allow raw SQL\n\nWire this up in src/index.ts so 'cassini repl' enters this mode.",
+      "description": "Remove @anthropic-ai/sdk from cli/package.json dependencies since it is no longer used.\n\n- Remove the @anthropic-ai/sdk entry from the dependencies object\n- Run bun install to update the lockfile\n- Verify the CLI still builds and runs without the SDK",
       "acceptanceCriteria": [
-        "cli/src/repl.ts exports a startRepl function",
-        "REPL prints a welcome banner and prompt",
-        "Natural language input is translated to SQL via AI and results displayed",
-        "SQL input (starting with SELECT etc.) is executed directly",
-        "Generated SQL is printed before results for natural language queries",
-        "All dot-commands work (.help, .tables, .schema, .format, .limit, .sql, .quit, .exit)",
-        ".format switches the output format for subsequent queries",
-        "Errors are caught and printed without crashing the REPL",
-        "Ctrl+C and Ctrl+D exit cleanly",
-        "Warns if ANTHROPIC_API_KEY is missing but allows raw SQL usage"
-      ]
-    },
-    {
-      "id": "cli-wire",
-      "title": "Wire everything together and test end-to-end",
-      "type": "backend",
-      "description": "Final integration: update cli/src/index.ts to import and call the real command handlers from commands.ts and repl.ts (replacing any stubs). Ensure the full pipeline works end-to-end.\n\nVerify all these work:\n- bun cli/src/index.ts --help\n- bun cli/src/index.ts tables\n- bun cli/src/index.ts schema\n- bun cli/src/index.ts query \"SELECT COUNT(*) FROM master_plan\"\n- bun cli/src/index.ts ask \"how many observations are there?\"\n- bun cli/src/index.ts ask \"what moons were observed?\" --format json\n- bun cli/src/index.ts ask \"show me all Titan flybys\" --sql\n- bun cli/src/index.ts \"what teams have the most observations?\" (bare ask, no subcommand)\n- bun cli/src/index.ts query \"SELECT * FROM master_plan LIMIT 3\" --format csv\n- bun cli/src/index.ts query \"SELECT target, COUNT(*) as n FROM master_plan GROUP BY target ORDER BY n DESC\" --limit 5\n\nAlso add the shebang #!/usr/bin/env bun to src/index.ts so the compiled binary works.\n\nUpdate the build script to verify the compiled binary works: bun build src/index.ts --compile --outfile=dist/cassini",
-      "acceptanceCriteria": [
-        "All command handlers are imported and wired in src/index.ts",
-        "All 10 example commands listed above produce correct output",
-        "Natural language queries return relevant results",
-        "Generated SQL is shown before results for 'ask' commands",
-        "--sql flag shows SQL without executing",
-        "Bare positional args work as implicit 'ask'",
-        "Table format is aligned and readable",
-        "JSON format is valid JSON",
-        "CSV format is valid CSV",
-        "--limit flag restricts result count",
-        "--format flag switches output format",
-        "--db flag allows specifying a custom database path",
-        "src/index.ts has #!/usr/bin/env bun shebang",
-        "bun build cli/src/index.ts --compile --outfile=cli/dist/cassini succeeds"
+        "@anthropic-ai/sdk is not in cli/package.json dependencies",
+        "bun install succeeds in cli/",
+        "bun cli/src/index.ts tables still works (no import errors)",
+        "bun cli/src/index.ts ask works with claude -p"
       ]
     }
   ]

@@ -14,7 +14,7 @@ import {
 } from '../lib/state.js'
 import type { Task, VerificationCheck } from '../lib/prd.js'
 import type { RunState, TaskState, TaskStatus } from '../lib/state.js'
-import { loadGitHubIntegration } from '../lib/github.js'
+import { loadGitHubIntegration, ensureGitHubIssues } from '../lib/github.js'
 import type { GitHubIntegration } from '../lib/github.js'
 
 type AgentName = 'test-writer' | 'backend-builder' | 'frontend-builder' | 'code-reviewer' | 'verifier' | 'git-committer' | 'pm'
@@ -83,6 +83,17 @@ export async function runCommand(argv: string[]): Promise<void> {
     ensureTaskState(state, task.id)
   }
   await saveState(state)
+
+  // Create GitHub issues from PRD if not already done
+  {
+    let frame = 0
+    const spinner = setInterval(() => {
+      process.stdout.write(`\r  ${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}  ${c.muted('Creating GitHub issues…')}`)
+    }, 80)
+    await ensureGitHubIssues(prd)
+    clearInterval(spinner)
+    process.stdout.write('\r' + ' '.repeat(40) + '\r')
+  }
 
   const github = await loadGitHubIntegration()
 
