@@ -1,0 +1,50 @@
+{
+  "sprint": "Cassini MCP Server",
+  "description": "Build an MCP (Model Context Protocol) server that exposes the Cassini mission SQLite database (cassini.db) for querying by Claude Code and Claude Desktop. TypeScript + Bun, using bun:sqlite for the database driver and @modelcontextprotocol/sdk for the MCP protocol. The server lives in a new mcp/ directory with its own package.json, separate from loop/.",
+  "createdAt": "2026-03-12",
+  "tasks": [
+    {
+      "id": "mcp-db",
+      "title": "Create mcp/src/db.ts — SQLite helper module",
+      "type": "backend",
+      "description": "Create the mcp/ package directory with package.json (dependencies: @modelcontextprotocol/sdk, zod; no better-sqlite3 — use bun:sqlite which is built-in), tsconfig.json, and src/db.ts.\n\nThe db.ts module provides three functions:\n- openDb(dbPath: string) — opens the SQLite database in read-only mode using bun:sqlite's Database class. Use path.resolve() to handle relative paths.\n- getSchema(db) — queries sqlite_master for tables, then PRAGMA table_info for each table. Returns a formatted string showing table names, column names, types, PK/NOT NULL flags.\n- query(db, sql) — executes a read-only SQL query. Before executing, validates the SQL doesn't match a write pattern (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, REPLACE, TRUNCATE, ATTACH, DETACH, REINDEX, VACUUM, PRAGMA with =). Returns JSON string of { rows } with results. Caps output at 100 rows — if more exist, truncates and adds a note.\n\nThe database is cassini.db in the project root. It has two tables:\n- master_plan (~61,873 rows): id, start_time_utc, duration, date, team, spass_type, target, request_name, library_definition, title, description\n- planets (6 rows): id, name, type, parent_body, distance_from_sun_km, orbital_period_days, radius_km, mass_kg, discovered_date, discoverer, notes\n\nIMPORTANT: Use `import { Database } from 'bun:sqlite'` — do NOT use better-sqlite3, it doesn't work with Bun.",
+      "acceptanceCriteria": [
+        "mcp/package.json exists with @modelcontextprotocol/sdk and zod as dependencies (NOT better-sqlite3)",
+        "mcp/tsconfig.json exists with appropriate TypeScript config",
+        "mcp/src/db.ts exports openDb, getSchema, and query functions",
+        "openDb opens the database in read-only mode using bun:sqlite",
+        "query rejects write statements with an error",
+        "query caps results at 100 rows with a truncation note",
+        "bun install in mcp/ succeeds"
+      ]
+    },
+    {
+      "id": "mcp-server",
+      "title": "Create mcp/src/index.ts — MCP server with query, schema, tables tools",
+      "type": "backend",
+      "description": "Create the MCP server entry point at mcp/src/index.ts using the McpServer API from @modelcontextprotocol/sdk/server/mcp.js and StdioServerTransport from @modelcontextprotocol/sdk/server/stdio.js.\n\nThe server exposes 3 tools:\n\n1. 'query' — Execute a read-only SQL query. Input: { sql: z.string() }. Uses the query() function from db.ts. Returns JSON rows. Catches errors and returns them with isError: true.\n\n2. 'schema' — Get database schema. No input. Uses getSchema() from db.ts. Returns formatted text.\n\n3. 'tables' — List all tables with row counts. No input. Queries sqlite_master for table names, then SELECT COUNT(*) for each. Returns formatted text like 'master_plan: 61873 rows'.\n\nAll tools wrap their logic in try/catch and return { content: [{ type: 'text', text }] } on success or { content: [{ type: 'text', text: 'Error: ...' }], isError: true } on failure.\n\nThe database path comes from DATABASE_PATH env var, defaulting to './cassini.db'.\n\nServer setup:\n```\nconst server = new McpServer({ name: 'cassini', version: '1.0.0' })\n// register tools...\nconst transport = new StdioServerTransport()\nawait server.connect(transport)\n```\n\nIMPORTANT: Import from db.ts using './db.js' extension (ESM resolution). The server must work when run via `bun run mcp/src/index.ts` from the project root.",
+      "acceptanceCriteria": [
+        "mcp/src/index.ts exists and imports from @modelcontextprotocol/sdk",
+        "Server exposes 'query', 'schema', and 'tables' tools",
+        "query tool accepts { sql: string } and returns JSON rows",
+        "schema tool returns formatted table/column info",
+        "tables tool returns table names with row counts",
+        "All tools have error handling with isError flag",
+        "Server uses StdioServerTransport",
+        "Running 'echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0.0\"}}}' | bun run mcp/src/index.ts' returns a valid JSON-RPC response"
+      ]
+    },
+    {
+      "id": "mcp-config",
+      "title": "Create .mcp.json for Claude Code auto-discovery",
+      "type": "backend",
+      "description": "Create .mcp.json in the project root for Claude Code to auto-discover the Cassini MCP server.\n\nContents:\n```json\n{\n  \"mcpServers\": {\n    \"cassini\": {\n      \"type\": \"stdio\",\n      \"command\": \"bun\",\n      \"args\": [\"run\", \"mcp/src/index.ts\"],\n      \"env\": {\n        \"DATABASE_PATH\": \"./cassini.db\"\n      }\n    }\n  }\n}\n```\n\nAlso save the implementation plan to docs/plans/cassini-mcp.md for reference. The plan should document: the database schema, the 3 tools exposed, design decisions (read-only, no compile step, row limit, separate package, bun:sqlite), and how to configure for Claude Desktop.",
+      "acceptanceCriteria": [
+        ".mcp.json exists in project root with correct cassini server config",
+        "docs/plans/cassini-mcp.md exists with implementation documentation",
+        "The command in .mcp.json is 'bun' with args ['run', 'mcp/src/index.ts']",
+        "DATABASE_PATH env var is set to './cassini.db'"
+      ]
+    }
+  ]
+}

@@ -14,6 +14,8 @@ import {
 } from '../lib/state.js'
 import type { Task, VerificationCheck } from '../lib/prd.js'
 import type { RunState, TaskState, TaskStatus } from '../lib/state.js'
+import { loadGitHubIntegration } from '../lib/github.js'
+import type { GitHubIntegration } from '../lib/github.js'
 
 type AgentName = 'test-writer' | 'backend-builder' | 'frontend-builder' | 'code-reviewer' | 'verifier' | 'git-committer' | 'pm'
 
@@ -47,6 +49,7 @@ interface ExecutionPlan {
 
 export async function runCommand(argv: string[]): Promise<void> {
   const resume = argv.includes('--resume')
+  const autoApprove = argv.includes('--yes') || argv.includes('-y')
 
   const branchFlagIdx = argv.indexOf('--branch')
   const branchFlag = branchFlagIdx !== -1 ? argv[branchFlagIdx + 1] : undefined
@@ -81,6 +84,8 @@ export async function runCommand(argv: string[]): Promise<void> {
   }
   await saveState(state)
 
+  const github = await loadGitHubIntegration()
+
   // Serialise all state writes — concurrent tasks share the same state object
   // and write to the same file. Queue ensures no interleaved writes.
   let saveQueue = Promise.resolve()
@@ -96,25 +101,30 @@ export async function runCommand(argv: string[]): Promise<void> {
   let plan = await runPlanSpinner(pendingTasks)
   let waves = buildWaves(pendingTasks, plan.dependencies)
 
-  while (true) {
+  if (autoApprove) {
     printPlan(waves, plan.reasoning)
+    console.log(c.muted('  Auto-approved (--yes)'))
+  } else {
+    while (true) {
+      printPlan(waves, plan.reasoning)
 
-    const answer = await p.text({
-      message: 'Proceed with this plan?',
-      placeholder: 'enter to confirm, or describe changes…',
-    })
+      const answer = await p.text({
+        message: 'Proceed with this plan?',
+        placeholder: 'enter to confirm, or describe changes…',
+      })
 
-    if (p.isCancel(answer)) {
-      p.cancel('Cancelled.')
-      process.exit(0)
+      if (p.isCancel(answer)) {
+        p.cancel('Cancelled.')
+        process.exit(0)
+      }
+
+      const feedback = typeof answer === 'string' ? answer.trim() : ''
+      if (!feedback) break  // confirmed — proceed
+
+      plan = await runPlanSpinner(pendingTasks, feedback)
+      waves = buildWaves(pendingTasks, plan.dependencies)
+      // loop back to show revised plan and prompt again
     }
-
-    const feedback = typeof answer === 'string' ? answer.trim() : ''
-    if (!feedback) break  // confirmed — proceed
-
-    plan = await runPlanSpinner(pendingTasks, feedback)
-    waves = buildWaves(pendingTasks, plan.dependencies)
-    // loop back to show revised plan and prompt again
   }
 
   console.log('')
@@ -139,7 +149,7 @@ export async function runCommand(argv: string[]): Promise<void> {
   for (const wave of waves) {
     currentWave++
     await Promise.allSettled(
-      wave.map(task => runTask(state, task, activeAgents, enqueueSave))
+      wave.map(task => runTask(state, task, activeAgents, enqueueSave, github))
     )
   }
 
@@ -155,6 +165,9 @@ export async function runCommand(argv: string[]): Promise<void> {
     PM, 1, pmDisplay,
   )
   activeAgents.delete('sprint:pm')
+
+  const summaryPath = path.join(process.cwd(), '.agentloop', 'sprint-summary.md')
+  await github.postSprintSummary(summaryPath)
 
   const finalContent = buildDashboard(prd.sprint, state, prd.tasks, activeAgents, dashboard, waves, currentWave, plan.reasoning)
   dashboard.stop(finalContent)
@@ -175,11 +188,13 @@ async function runTask(
   task: Task,
   activeAgents: Map<string, ActiveTaskDisplay>,
   enqueueSave: () => Promise<void>,
+  github: GitHubIntegration,
 ): Promise<void> {
   const ts = state.tasks[task.id]
   ts.status = 'testing'
   ts.startedAt = new Date().toISOString()
   enqueueSave()
+  github.updateStatus(task.id, 'testing')
 
   // test-writer always runs first, alone
   const twDisplay: ActiveTaskDisplay = {
@@ -292,6 +307,8 @@ async function runTask(
     ts.status = 'failed'
     ts.completedAt = new Date().toISOString()
     enqueueSave()
+    github.updateStatus(task.id, 'failed')
+    github.postComment(task.id, `✋ **Blocked** after ${ts.attempts} attempt(s).\n\nLast feedback:\n${ts.lastFeedback ?? '(none)'}`)
     return
   }
 
@@ -308,6 +325,7 @@ async function runTask(
   ts.status = 'done'
   ts.completedAt = new Date().toISOString()
   enqueueSave()
+  github.updateStatus(task.id, 'done')
 }
 
 interface AgentResult {
