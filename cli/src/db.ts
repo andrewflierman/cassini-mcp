@@ -12,24 +12,9 @@ export function openDb(dbPath: string): Database {
   return new Database(resolved, { readonly: true });
 }
 
-/** Returns a list of all user tables with their row counts. */
-export function getTableList(db: Database): Array<{ name: string; rows: number }> {
-  const tables = db
-    .query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    )
-    .all();
-
-  return tables.map(({ name }) => {
-    const result = db
-      .query<{ count: number }, []>(`SELECT COUNT(*) as count FROM ${JSON.stringify(name)}`)
-      .get();
-    return { name, rows: result?.count ?? 0 };
-  });
-}
-
 /** Returns a human-readable schema string describing all user tables. */
 export function getSchema(db: Database): string {
+  // Fetch all user-created tables from sqlite_master
   const tables = db
     .query<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
@@ -74,28 +59,60 @@ export function getSchema(db: Database): string {
 /**
  * Executes a read-only SQL query against the database.
  * Rejects write statements before execution.
- * Returns rows capped at the given limit (default 50).
- * If more rows exist, also returns a truncation note.
+ * Returns a JSON string of { rows } capped at limit rows (default 50).
+ * If more rows exist, adds a truncation note to the result.
+ */
+export function query(db: Database, sql: string, limit: number = 50): string {
+  if (WRITE_PATTERN.test(sql)) {
+    throw new Error(`Write statements are not allowed: ${sql.trim()}`);
+  }
+
+  const stmt = db.query<Record<string, unknown>, []>(sql);
+  const allRows = stmt.all();
+
+  if (allRows.length > limit) {
+    return JSON.stringify({
+      rows: allRows.slice(0, limit),
+      note: `Results truncated to ${limit} rows (${allRows.length} total rows matched). Refine your query to see more.`,
+    });
+  }
+
+  return JSON.stringify({ rows: allRows });
+}
+
+/**
+ * Executes a read-only SQL query against the database.
+ * Rejects write statements before execution.
+ * Returns the raw row objects (not a JSON string) capped at limit (default 50).
+ * This is the primary function the CLI uses to feed data to the formatter.
  */
 export function queryRaw(
   db: Database,
   sql: string,
   limit: number = 50
-): { rows: Record<string, unknown>[]; note?: string } {
+): Record<string, unknown>[] {
   if (WRITE_PATTERN.test(sql)) {
     throw new Error(`Write statements are not allowed: ${sql.trim()}`);
   }
 
-  // Fetch limit+1 rows to detect truncation without a full table scan
   const stmt = db.query<Record<string, unknown>, []>(sql);
   const allRows = stmt.all();
 
-  if (allRows.length > limit) {
-    return {
-      rows: allRows.slice(0, limit),
-      note: `Results truncated to ${limit} rows (${allRows.length} total rows matched). Refine your query to see more.`,
-    };
-  }
+  return allRows.slice(0, limit);
+}
 
-  return { rows: allRows };
+/** Returns an array of { name, count } for each user table in the database. */
+export function getTableList(db: Database): Array<{ name: string; count: number }> {
+  const tables = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )
+    .all();
+
+  return tables.map(({ name }) => {
+    const result = db
+      .query<{ count: number }, []>(`SELECT COUNT(*) as count FROM ${JSON.stringify(name)}`)
+      .get();
+    return { name, count: result?.count ?? 0 };
+  });
 }
