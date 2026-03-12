@@ -5,9 +5,9 @@
  * SQL keywords trigger direct execution; everything else goes through the AI pipeline.
  */
 
-import { openDb, getSchema, getTableList, queryRaw } from "./db.js";
+import { openDb, getSchema, getTableList, queryRaw, getSampleValues } from "./db.js";
 import { formatRows } from "./formatter.js";
-import { naturalLanguageToSql } from "./ai.js";
+import { naturalLanguageToSql, validateClaude } from "./ai.js";
 import type { Database } from "bun:sqlite";
 
 // ANSI escape codes for dim/reset
@@ -44,11 +44,10 @@ export async function startRepl(opts: {
       `Type .help for available commands.\n\n`
   );
 
-  // Warn if API key is missing, but continue (raw SQL still works)
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey.trim() === "") {
+  // Warn if claude CLI is unavailable, but continue (raw SQL still works)
+  if (!await validateClaude()) {
     process.stderr.write(
-      "Warning: ANTHROPIC_API_KEY is not set. Natural language queries will not work.\n" +
+      "Warning: claude CLI is not available. Natural language queries will not work.\n" +
         "Raw SQL queries will still execute normally.\n\n"
     );
   }
@@ -226,7 +225,8 @@ async function runSql(db: Database, sql: string): Promise<void> {
 async function runNaturalLanguage(db: Database, question: string): Promise<void> {
   try {
     const schema = getSchema(db);
-    const { sql } = await naturalLanguageToSql(question, schema);
+    const sampleValues = getSampleValues(db);
+    const { sql } = await naturalLanguageToSql(question, schema, sampleValues);
 
     // Print the generated SQL (dimmed) if showSql is on
     if (showSql) {

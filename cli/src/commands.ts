@@ -8,9 +8,9 @@
  *   4. Handle errors → stderr + exit code 1
  */
 
-import { openDb, queryRaw, getTableList, getSchema } from "./db.js";
+import { openDb, queryRaw, getTableList, getSchema, getSampleValues } from "./db.js";
 import { formatRows } from "./formatter.js";
-import { naturalLanguageToSql, validateApiKey } from "./ai.js";
+import { validateClaude } from "./ai.js";
 
 // Shared shape for parsed CLI options (mirrors ParsedArgs in index.ts)
 interface CommandOpts {
@@ -30,8 +30,13 @@ interface CommandOpts {
  * With --sql flag: only prints the generated SQL, does not execute.
  */
 export async function handleAsk(opts: CommandOpts): Promise<void> {
-  // Validate API key before doing anything else (fast-fail, no HTTP call)
-  if (!validateApiKey()) {
+  // Check claude CLI availability before doing anything else (fast-fail)
+  if (!await validateClaude()) {
+    console.error(
+      "Error: claude CLI is not available.\n" +
+        "Please install Claude Code and ensure it is on your PATH:\n" +
+        "  https://claude.ai/code"
+    );
     process.exit(1);
   }
 
@@ -50,7 +55,9 @@ export async function handleAsk(opts: CommandOpts): Promise<void> {
 
   try {
     const schema = getSchema(db);
-    ({ sql, explanation } = await naturalLanguageToSql(question, schema));
+    const sampleValues = getSampleValues(db);
+    const { naturalLanguageToSql } = await import("./ai.js");
+    ({ sql, explanation } = await naturalLanguageToSql(question, schema, sampleValues));
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
