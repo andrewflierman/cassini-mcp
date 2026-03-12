@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cassini": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "mcp/src/index.ts"],
+      "env": {
+        "DATABASE_PATH": "./cassini.db"
+      }
+    }
+  }
+}
