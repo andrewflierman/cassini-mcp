@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { handleAsk, handleQuery, handleTables, handleSchema } from "./commands.js";
 import { startRepl } from "./repl.js";
 
