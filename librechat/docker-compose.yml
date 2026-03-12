@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3080:3080"
+    depends_on:
+      - mongodb
+      - meilisearch
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    volumes:
+      - mongodb-data:/data/db
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    volumes:
+      - meili-data:/meili_data
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+    restart: unless-stopped
+
+volumes:
+  mongodb-data:
+  meili-data:
