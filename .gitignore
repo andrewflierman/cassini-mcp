@@ -6,3 +6,10 @@ dist/
 .agentloop/
 .vscode/
 .env
+
+# LibreChat runtime files
+librechat/.env
+librechat/data/
+librechat/logs/
+librechat/meili_data/
+librechat/uploads/
