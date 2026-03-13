@@ -1,6 +1,7 @@
 {
-  "_epic": 12,
-  "refactor-ai": 13,
-  "refactor-callers": 14,
-  "refactor-deps": 15
+  "_epic": 16,
+  "librechat-dockerfile": 17,
+  "librechat-compose": 18,
+  "librechat-config": 19,
+  "librechat-gitignore": 20
 }

@@ -1,8 +1,8 @@
 services:
   api:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: librechat/Dockerfile
     ports:
       - "3080:3080"
     depends_on:
@@ -10,6 +10,7 @@ services:
       - meilisearch
     volumes:
       - ./librechat.yaml:/app/librechat.yaml:ro
+      - ../cassini.db:/app/cassini.db:ro
     env_file:
       - .env
     restart: unless-stopped

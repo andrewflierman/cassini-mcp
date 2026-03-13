@@ -16,9 +16,8 @@ RUN curl -fsSL https://bun.sh/install | bash && \
     chmod +x /usr/local/bin/bun
 
 # Copy the Cassini MCP server source into the image.
-# Build context must be the repository root so that mcp-server/ is reachable.
-# mcp-server/ is a symlink to mcp/ in the repository root.
-COPY mcp-server/ /app/mcp-server/
+# Build context is the repository root (set in docker-compose.yml).
+COPY mcp/ /app/mcp-server/
 
 # Install MCP server dependencies using Bun.
 RUN cd /app/mcp-server && bun install

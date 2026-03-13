@@ -1,44 +1,54 @@
 {
-  "sprint": "Cassini CLI — claude -p refactor",
-  "description": "Refactor the Cassini CLI to use `claude -p` subprocess instead of @anthropic-ai/sdk for natural language to SQL translation. This allows the CLI to work with Claude Max/Pro OAuth tokens (via Claude Code) instead of requiring a separate pay-per-use API key. The CLI already works end-to-end — this sprint replaces the AI backend only. The system prompt with Cassini domain context, schema, and sample values is preserved and passed via --system-prompt flag.",
+  "sprint": "LibreChat + Cassini MCP Docker Deployment",
+  "description": "Deploy LibreChat with Cassini MCP server via Docker Compose. The setup extends the LibreChat image with Bun and the Cassini MCP server, configures MongoDB and Meilisearch services, and wires up the MCP stdio transport so LibreChat can query the Cassini mission database.",
   "createdAt": "2026-03-12",
   "tasks": [
     {
-      "id": "refactor-ai",
-      "title": "Replace Anthropic SDK with claude -p in cli/src/ai.ts",
-      "type": "backend",
-      "description": "Rewrite cli/src/ai.ts to use `claude -p` subprocess instead of the Anthropic SDK.\n\nChanges:\n- Remove `import Anthropic from '@anthropic-ai/sdk'`\n- Keep `buildSystemPrompt(schema, sampleValues)` function as-is — it builds the system prompt with Cassini domain context, schema, and sample column values\n- Rewrite `naturalLanguageToSql(question, schema, sampleValues)` to:\n  - Strip Claude Code env vars (CLAUDECODE, CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_ENTRYPOINT) from the subprocess env to avoid nested-session errors (same pattern as loop/src/commands/run.ts:598-601)\n  - Spawn: `claude -p <question> --system-prompt <systemPrompt> --output-format text --model sonnet --dangerously-skip-permissions --allowedTools ''`\n  - Use `--output-format text` (not stream-json) — we just need the final result text\n  - Capture stdout as the result text\n  - Parse JSON `{ sql, explanation }` from the result (same extraction logic as before — look for JSON object in response)\n  - On non-zero exit: capture stderr and throw descriptive error\n- Rename `validateApiKey()` to `validateClaude()` — instead of checking ANTHROPIC_API_KEY env var, run `claude --version` and return true if it succeeds, false if claude CLI is not found\n\nReference implementation: see loop/src/commands/run.ts lines 598-627 for the same `claude -p` pattern with env stripping and stream-json parsing.",
+      "id": "librechat-dockerfile",
+      "title": "Create librechat/Dockerfile extending LibreChat with Bun + Cassini MCP",
+      "type": "infra",
+      "description": "Create a Dockerfile that extends the official LibreChat image and adds Bun runtime plus the Cassini MCP server.\n\n- Base image: ghcr.io/danny-avila/librechat:latest (or a pinned version)\n- Install Bun (curl -fsSL https://bun.sh/install | bash)\n- Copy the mcp-server/ directory into the image\n- Run bun install inside mcp-server/ to install dependencies\n- The MCP server will be invoked via stdio transport by LibreChat at runtime",
       "acceptanceCriteria": [
-        "cli/src/ai.ts no longer imports @anthropic-ai/sdk",
-        "naturalLanguageToSql spawns claude -p subprocess with --system-prompt, --model sonnet, --output-format text",
-        "Claude Code env vars are stripped from subprocess environment",
-        "Response is parsed as JSON with sql and explanation fields",
-        "validateClaude checks for claude CLI availability instead of API key",
-        "Errors from the subprocess are caught and rethrown with clear messages"
+        "librechat/Dockerfile exists and builds successfully",
+        "Built image contains bun binary",
+        "Built image contains mcp-server/ with node_modules",
+        "Image extends official LibreChat base"
       ]
     },
     {
-      "id": "refactor-callers",
-      "title": "Update commands.ts and repl.ts for new AI interface",
-      "type": "backend",
-      "description": "Update the two callsites of the AI module to use the renamed validation function.\n\nChanges to cli/src/commands.ts:\n- Change import from `validateApiKey` to `validateClaude`\n- Change the call in handleAsk from `validateApiKey()` to `validateClaude()`\n\nChanges to cli/src/repl.ts:\n- Change the ANTHROPIC_API_KEY env check warning to instead run validateClaude() — if false, warn that claude CLI is not available but raw SQL still works\n\nThe naturalLanguageToSql function signature is unchanged, so no other changes needed in these files.",
+      "id": "librechat-compose",
+      "title": "Create librechat/docker-compose.yml with api, mongodb, meilisearch",
+      "type": "infra",
+      "description": "Create a Docker Compose file defining the services needed to run LibreChat with Cassini MCP.\n\nServices:\n- api: builds from ./Dockerfile, ports 3080:3080, depends on mongodb and meilisearch, mounts librechat.yaml config, uses env_file .env\n- mongodb: mongo image, persistent volume for data\n- meilisearch: meilisearch image, persistent volume for data, MEILI_NO_ANALYTICS=true\n\nVolumes for data persistence across restarts.",
       "acceptanceCriteria": [
-        "commands.ts imports and calls validateClaude instead of validateApiKey",
-        "repl.ts warns about missing claude CLI instead of missing ANTHROPIC_API_KEY",
-        "handleAsk still validates before calling the AI",
-        "REPL still allows raw SQL when claude CLI is unavailable"
+        "librechat/docker-compose.yml exists with api, mongodb, meilisearch services",
+        "api service builds from local Dockerfile",
+        "api service mounts librechat.yaml as config",
+        "mongodb and meilisearch have persistent volumes",
+        "docker compose config validates without errors"
       ]
     },
     {
-      "id": "refactor-deps",
-      "title": "Remove @anthropic-ai/sdk dependency from cli/package.json",
-      "type": "backend",
-      "description": "Remove @anthropic-ai/sdk from cli/package.json dependencies since it is no longer used.\n\n- Remove the @anthropic-ai/sdk entry from the dependencies object\n- Run bun install to update the lockfile\n- Verify the CLI still builds and runs without the SDK",
+      "id": "librechat-config",
+      "title": "Create librechat/librechat.yaml and librechat/.env.example",
+      "type": "infra",
+      "description": "Create the LibreChat YAML configuration with Cassini MCP stdio config, and an .env.example with required environment variables.\n\nlibrechat.yaml:\n- Configure the Cassini MCP server as a stdio tool\n- Command: bun run /app/mcp-server/index.ts (path inside the Docker image)\n- Set appropriate model and endpoint configuration\n\n.env.example:\n- ANTHROPIC_API_KEY=your-key-here (or relevant provider keys)\n- MONGO_URI=mongodb://mongodb:27017/LibreChat\n- MEILI_HOST=http://meilisearch:7700\n- Any other required LibreChat env vars with placeholder values",
       "acceptanceCriteria": [
-        "@anthropic-ai/sdk is not in cli/package.json dependencies",
-        "bun install succeeds in cli/",
-        "bun cli/src/index.ts tables still works (no import errors)",
-        "bun cli/src/index.ts ask works with claude -p"
+        "librechat/librechat.yaml configures Cassini MCP server via stdio",
+        "librechat/.env.example lists all required environment variables",
+        "MCP server command path matches Dockerfile COPY destination",
+        "YAML is valid and follows LibreChat config schema"
+      ]
+    },
+    {
+      "id": "librechat-gitignore",
+      "title": "Update root .gitignore for LibreChat runtime data",
+      "type": "infra",
+      "description": "Add entries to the root .gitignore to exclude LibreChat runtime files that should not be committed.\n\nEntries to add:\n- librechat/.env (actual env file with secrets)\n- librechat/data/ (MongoDB/Meilisearch volume data if stored locally)\n- librechat/logs/ (runtime logs)\n- Any other generated files from docker compose",
+      "acceptanceCriteria": [
+        "Root .gitignore includes librechat/.env",
+        "Root .gitignore includes librechat runtime data directories",
+        ".env.example is NOT ignored (should be committed)"
       ]
     }
   ]

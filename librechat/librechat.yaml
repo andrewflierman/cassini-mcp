@@ -1,4 +1,4 @@
-version: 1.1
+version: "1.1"
 
 # ─── MCP Servers ──────────────────────────────────────────────────────────────
 #
@@ -14,7 +14,7 @@ mcpServers:
     command: bun
     args:
       - run
-      - /app/mcp-server/index.ts
+      - /app/mcp-server/src/index.ts
     # Environment variables forwarded to the MCP server process.
     # DATABASE_PATH tells the server where to find the SQLite database.
     env:
