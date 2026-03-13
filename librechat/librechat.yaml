@@ -1,0 +1,35 @@
+version: 1.1
+
+# ─── MCP Servers ──────────────────────────────────────────────────────────────
+#
+# LibreChat spawns each stdio MCP server as a child process and communicates
+# with it over stdin/stdout using the MCP protocol.
+#
+# The cassini server is the Cassini mission database query tool. It runs inside
+# the Docker image under /app/mcp-server/ (installed by the Dockerfile).
+
+mcpServers:
+  cassini:
+    type: stdio
+    command: bun
+    args:
+      - run
+      - /app/mcp-server/index.ts
+    # Environment variables forwarded to the MCP server process.
+    # DATABASE_PATH tells the server where to find the SQLite database.
+    env:
+      DATABASE_PATH: /app/cassini.db
+    # Give the server enough time to initialise (SQLite open + schema read).
+    timeout: 60000
+    initTimeout: 15000
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+#
+# Anthropic is the primary AI provider. The API key is read from the
+# ANTHROPIC_API_KEY environment variable at runtime.
+
+endpoints:
+  anthropic:
+    # Use the fast Haiku model for auto-generated conversation titles.
+    titleModel: claude-haiku-4-5
+    titleMethod: completion
